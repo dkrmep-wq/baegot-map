@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>시흥 배곧동 우리동네 배리어프리 인권 지도</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  html,body{height:100%;margin:0;font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif;background:#fdf8f5}
+  body{display:flex;flex-direction:column;overflow:hidden}
+  #layout{flex:1;display:flex;flex-direction:column;min-height:0}
+  #mapwrap{position:relative;flex:1;min-height:220px}
+  #map{position:absolute;top:0;right:0;bottom:0;left:0;z-index:0;background:#e5e7eb}
+  #side{display:flex;flex-direction:column;min-height:0;height:224px;background:#fff;border-top:1px solid #e2e8f0}
+  @media (min-width:768px){
+    #layout{flex-direction:row}
+    #side{width:320px;height:auto;border-top:0;border-left:1px solid #e2e8f0}
+  }
+  .pin{width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);position:relative}
+  .pin::after{content:"";position:absolute;width:8px;height:8px;border-radius:50%;background:#fff;top:7px;left:7px}
+  .pin.good{background:#22c55e}.pin.bad{background:#ef4444}
+  .leaflet-popup-content{margin:12px 14px;min-width:200px;max-width:240px;font-size:13px;line-height:1.5}
+  .leaflet-popup-content-wrapper{border-radius:16px}
+  .card{transition:transform .15s}.card:active{transform:scale(.98)}
+  button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #a78bfa;outline-offset:1px}
+</style>
+</head>
+<body>
+
+<header class="bg-gradient-to-r from-emerald-100 via-sky-100 to-pink-100 px-3 py-2 shadow-sm z-10">
+  <div class="flex items-center justify-between gap-2">
+    <h1 class="text-base sm:text-xl font-bold text-slate-700">🏫 시흥 배곧동 우리동네 배리어프리 인권 지도</h1>
+    <button id="adminBtn" class="shrink-0 text-xs sm:text-sm px-3 py-1.5 rounded-full bg-white text-slate-600 border border-slate-300 hover:bg-slate-50">🔒 관리자 모드</button>
+  </div>
+  <div class="mt-2 flex flex-wrap items-center gap-2">
+    <div id="filters" class="flex gap-1.5">
+      <button data-cat="all" class="fbtn">전체 보기</button>
+      <button data-cat="good" class="fbtn">🟢 배리어프리 훌륭</button>
+      <button data-cat="bad" class="fbtn">🔴 개선 필요</button>
+    </div>
+    <input id="search" type="search" placeholder="🔍 장소명 또는 작성자 검색" class="flex-1 min-w-[160px] px-3 py-1.5 rounded-full border border-slate-300 text-sm bg-white">
+  </div>
+</header>
+
+<main id="layout">
+  <section id="mapwrap">
+    <div id="map"></div>
+    <div id="mapWarn" class="hidden absolute left-3 right-3 top-14 z-[600] bg-amber-100 border border-amber-300 text-amber-900 text-sm rounded-xl px-3 py-2 shadow">
+      <div class="font-bold">⚠️ 지도 이미지를 불러오지 못했어요.</div>
+      <div id="mapWarnTxt" class="mt-1"></div>
+    </div>
+    <div class="absolute bottom-3 left-3 z-[500] bg-white/90 rounded-xl px-3 py-1.5 text-xs text-slate-600 shadow pointer-events-none">📍 지도를 클릭해서 장소를 제보하세요</div>
+  </section>
+  <aside id="side">
+    <div class="px-3 py-2 text-sm font-bold text-slate-600 bg-violet-50">📋 제보 목록 <span id="count" class="font-normal text-slate-500"></span>
+      <span id="mode" class="block text-xs font-normal text-slate-500"></span></div>
+    <div id="syncMsg" class="hidden mx-2 mt-2 text-xs bg-amber-100 border border-amber-300 text-amber-900 rounded-xl px-2 py-1.5"></div>
+    <div id="list" class="flex-1 overflow-y-auto p-2 space-y-2"></div>
+  </aside>
+</main>
+
+<!-- 등록 모달 -->
+<div id="modal" class="fixed inset-0 z-[1000] hidden items-center justify-center bg-black/40 p-3">
+  <form id="form" novalidate class="bg-white rounded-3xl shadow-xl w-full max-w-md max-h-full overflow-y-auto p-5 space-y-3">
+    <h2 class="text-lg font-bold text-slate-700">📍 새 장소 제보하기</h2>
+    <div>
+      <p class="text-sm font-semibold text-slate-600 mb-1">구분</p>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="cursor-pointer"><input type="radio" name="cat" value="good" class="peer sr-only" checked>
+          <span class="block text-center text-sm py-2 rounded-xl border-2 border-emerald-200 bg-emerald-50 peer-checked:border-emerald-500 peer-checked:bg-emerald-200 peer-focus-visible:ring-2">🟢 배리어프리 잘 된 곳</span></label>
+        <label class="cursor-pointer"><input type="radio" name="cat" value="bad" class="peer sr-only">
+          <span class="block text-center text-sm py-2 rounded-xl border-2 border-rose-200 bg-rose-50 peer-checked:border-rose-500 peer-checked:bg-rose-200 peer-focus-visible:ring-2">🔴 개선이 필요한 곳</span></label>
+      </div>
+    </div>
+    <label class="block text-sm font-semibold text-slate-600">장소명
+      <input name="name" required maxlength="40" placeholder="예: 배곧도서관 입구" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 font-normal"></label>
+    <label class="block text-sm font-semibold text-slate-600">학번/이름
+      <input name="author" required maxlength="30" placeholder="예: 1학년 2반 김도덕" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 font-normal"></label>
+    <label class="block text-sm font-semibold text-slate-600">등록 이유 및 개선 아이디어
+      <textarea name="reason" required maxlength="300" rows="4" placeholder="왜 이 장소를 골랐나요? 어떻게 바꾸면 좋을까요?" class="mt-1 w-full px-3 py-2 rounded-xl border border-slate-300 font-normal"></textarea></label>
+    <div class="text-sm font-semibold text-slate-600">사진 (선택)
+      <label class="mt-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-violet-300 bg-violet-50 text-violet-600 cursor-pointer">📷 사진 찍기 / 사진 고르기
+        <input id="photoFile" type="file" accept="image/*" class="sr-only"></label>
+      <div id="preview" class="hidden mt-2 relative">
+        <img id="previewImg" alt="미리보기" class="w-full max-h-40 object-cover rounded-xl">
+        <button type="button" id="photoClear" class="absolute top-1 right-1 bg-white/90 rounded-full px-2 py-0.5 text-xs">✕ 지우기</button>
+      </div>
+    </div>
+    <p id="err" class="hidden text-sm text-rose-600 font-semibold"></p>
+    <div class="sticky bottom-0 bg-white pt-2 flex gap-2">
+      <button type="button" id="cancel" class="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-semibold">취소</button>
+      <button type="button" id="submitBtn" class="flex-1 py-2.5 rounded-xl bg-violet-500 text-white font-semibold">등록하기</button>
+    </div>
+  </form>
+</div>
+
+<!-- 확인/비밀번호 창, 안내 메시지 (브라우저 팝업 대신 사용) -->
+<div id="dlg" class="fixed inset-0 z-[1100] hidden items-center justify-center bg-black/40 p-3">
+  <div class="bg-white rounded-3xl shadow-xl w-full max-w-xs p-5 space-y-3">
+    <p id="dlgMsg" class="font-bold text-slate-700"></p>
+    <input id="dlgInput" type="password" inputmode="numeric" placeholder="비밀번호" class="hidden w-full px-3 py-2 rounded-xl border border-slate-300">
+    <p id="dlgErr" class="hidden text-sm text-rose-600 font-semibold"></p>
+    <div class="flex gap-2">
+      <button type="button" id="dlgNo" class="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-semibold">취소</button>
+      <button type="button" id="dlgOk" class="flex-1 py-2.5 rounded-xl bg-violet-500 text-white font-semibold">확인</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-[1200] hidden bg-slate-800 text-white text-sm px-4 py-2 rounded-full shadow-lg"></div>
+
+<script>
+const KEY = 'baegot-barrierfree-v1', ADMIN_PW = '1234';
+const CENTER = [37.3635, 126.7380];
+const BOUNDS = L.latLngBounds([37.340, 126.700], [37.390, 126.770]);
+const META = { good: {label:'🟢 배리어프리 훌륭', color:'#22c55e', bg:'bg-emerald-50 border-emerald-300'},
+               bad:  {label:'🔴 개선 필요',       color:'#ef4444', bg:'bg-rose-50 border-rose-300'} };
+
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyA6VVd21JOCeSlvUo6eInSgplbncKhcykY",
+  authDomain: "baegot-map.firebaseapp.com",
+  projectId: "baegot-map",
+  storageBucket: "baegot-map.firebasestorage.app",
+  messagingSenderId: "907413381371",
+  appId: "1:907413381371:web:66bfa29d27e7512984505e"
+};
+let data = [], db = null, online = false, unsub = null, pendingFocus = null, openId = null, rendering = false;
+let cat = 'all', query = '', isAdmin = false, pending = null, tempMark = null;
+const markers = {};
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeUrl = u => /^(https?:\/\/|data:image\/)/i.test(u || '') ? u : '';
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(data)); return true; } catch (e) { return false; } };
+const LIKED_KEY = 'baegot-liked-v1';
+let liked = [];
+try { liked = JSON.parse(localStorage.getItem(LIKED_KEY) || '[]'); } catch (e) { liked = []; }
+
+/* ---------- 확인창 / 안내 ---------- */
+const $ = id => document.getElementById(id);
+let dlgFn = null, toastTimer;
+function openDlg(msg, withInput, onOk) {
+  $('dlgMsg').textContent = msg; dlgFn = onOk;
+  $('dlgInput').value = ''; $('dlgInput').classList.toggle('hidden', !withInput);
+  $('dlgErr').classList.add('hidden');
+  $('dlg').classList.remove('hidden'); $('dlg').classList.add('flex');
+  if (withInput) $('dlgInput').focus();
+}
+function closeDlg() { $('dlg').classList.add('hidden'); $('dlg').classList.remove('flex'); dlgFn = null; }
+$('dlgOk').addEventListener('click', () => {
+  if (!dlgFn) return;
+  const err = dlgFn($('dlgInput').value);
+  if (err) { $('dlgErr').textContent = err; $('dlgErr').classList.remove('hidden'); } else closeDlg();
+});
+$('dlgNo').addEventListener('click', closeDlg);
+$('dlgInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('dlgOk').click(); });
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.add('hidden'), 2500);
+}
+
+/* ---------- 지도 ---------- */
+const map = L.map('map', { center: CENTER, zoom: 15, minZoom: 14, maxZoom: 19, maxBounds: BOUNDS, maxBoundsViscosity: 1 });
+/* 지도 배경: OpenStreetMap 독일 서버 */
+const tiles = L.tileLayer('https://tile.openstreetmap.de/{z}/{x}/{y}.png', {
+  maxNativeZoom: 18, maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+let tilesOk = false;
+tiles.on('tileload', () => { tilesOk = true; $('mapWarn').classList.add('hidden'); });
+setTimeout(() => {
+  if (tilesOk) return;
+  $('mapWarnTxt').textContent = '이 파일을 저장해서 크롬·엣지 같은 일반 브라우저로 직접 열었는지, 학교·기관 네트워크가 지도 서버(tile.openstreetmap.de)를 막고 있지 않은지 확인해 주세요.';
+  $('mapWarn').classList.remove('hidden');
+}, 8000);
+
+/* 지도 크기를 다시 재서 타일을 빠짐없이 불러오게 함 */
+const fixSize = () => map.invalidateSize();
+if (window.ResizeObserver) new ResizeObserver(fixSize).observe($('mapwrap'));
+window.addEventListener('resize', fixSize);
+window.addEventListener('load', () => { fixSize(); setTimeout(fixSize, 400); });
+
+const layer = L.layerGroup().addTo(map);
+map.on('popupopen', e => { if (!rendering && e.popup._source) openId = e.popup._source._pid || null; });
+map.on('popupclose', () => { if (!rendering) openId = null; });
+
+const icon = c => L.divIcon({ className: '', html: `<div class="pin ${c}"></div>`, iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -26] });
+
+function popupHtml(p) {
+  const m = META[p.cat], url = safeUrl(p.photo);
+  return `<div>
+    <div class="font-bold" style="color:${m.color}">${m.label}</div>
+    <div class="text-base font-bold text-slate-800 mt-0.5">${esc(p.name)}</div>
+    <div class="text-slate-500 text-xs mb-1">✏️ ${esc(p.author)}</div>
+    ${url ? `<img src="${esc(url)}" alt="" style="max-height:110px;width:100%;object-fit:cover;border-radius:10px;margin:4px 0" onerror="this.remove()">` : ''}
+    <div class="text-slate-700" style="white-space:pre-wrap">${esc(p.reason)}</div>
+    <div class="flex gap-2 mt-2">
+      ${liked.includes(p.id)
+        ? `<button disabled class="px-3 py-1 rounded-full bg-slate-100 text-slate-400 font-semibold text-xs">❤️ 공감했어요 (${p.likes})</button>`
+        : `<button onclick="like('${p.id}')" class="px-3 py-1 rounded-full bg-pink-100 text-pink-600 font-semibold text-xs">❤️ 공감해요 (${p.likes})</button>`}
+      ${isAdmin ? `<button onclick="del('${p.id}')" class="px-3 py-1 rounded-full bg-slate-800 text-white text-xs">삭제</button>` : ''}
+    </div></div>`;
+}
+
+/* ---------- 화면 그리기 ---------- */
+function visible() {
+  const q = query.trim().toLowerCase();
+  return data.filter(p => (cat === 'all' || p.cat === cat) &&
+    (!q || p.name.toLowerCase().includes(q) || p.author.toLowerCase().includes(q)));
+}
+
+function render() {
+  rendering = true;
+  layer.clearLayers();
+  Object.keys(markers).forEach(k => delete markers[k]);
+  const items = visible();
+  items.forEach(p => {
+    const mk = L.marker([p.lat, p.lng], { icon: icon(p.cat) }).bindPopup(() => popupHtml(p));
+    mk._pid = p.id; mk.addTo(layer); markers[p.id] = mk;
+  });
+  rendering = false;
+  if (openId && markers[openId]) markers[openId].openPopup();
+  document.getElementById('count').textContent = `(${items.length}개)`;
+  document.getElementById('list').innerHTML = items.length ? items.slice().reverse().map(p => `
+    <div class="card cursor-pointer rounded-2xl border p-3 ${META[p.cat].bg}" onclick="focusItem('${p.id}')">
+      <div class="flex justify-between items-start gap-2">
+        <div class="font-bold text-slate-800 text-sm">${esc(p.name)}</div>
+        <span class="text-xs whitespace-nowrap">${p.cat === 'good' ? '🟢' : '🔴'}</span>
+      </div>
+      <div class="text-xs text-slate-500">✏️ ${esc(p.author)}</div>
+      <div class="text-xs text-slate-700 mt-1 line-clamp-2">${esc(p.reason)}</div>
+      <div class="flex justify-between items-center mt-1.5">
+        <span class="text-xs text-pink-600">❤️ ${p.likes}</span>
+        ${isAdmin ? `<button onclick="event.stopPropagation();del('${p.id}')" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-white">삭제</button>` : ''}
+      </div>
+    </div>`).join('')
+    : '<p class="text-center text-sm text-slate-400 py-8">아직 제보가 없어요.<br>지도를 클릭해서 첫 제보를 남겨 보세요!</p>';
+  document.querySelectorAll('.fbtn').forEach(b => {
+    const on = b.dataset.cat === cat;
+    b.className = 'fbtn text-xs sm:text-sm px-3 py-1.5 rounded-full border whitespace-nowrap ' +
+      (on ? 'bg-violet-500 text-white border-violet-500' : 'bg-white text-slate-600 border-slate-300');
+  });
+}
+
+/* ---------- 동작 ---------- */
+function focusItem(id) {
+  const p = data.find(x => x.id === id), mk = markers[id];
+  if (!p || !mk) return;
+  map.setView([p.lat, p.lng], Math.max(map.getZoom(), 17), { animate: true });
+  mk.openPopup();
+}
+function like(id) {
+  if (liked.includes(id)) return;
+  liked.push(id);
+  try { localStorage.setItem(LIKED_KEY, JSON.stringify(liked)); } catch (e) {}
+  if (online) {
+    db.collection('reports').doc(id).update({ likes: firebase.firestore.FieldValue.increment(1) })
+      .catch(err => toast('공감을 저장하지 못했어요 (' + (err.code || '오류') + ')'));
+  } else {
+    const p = data.find(x => x.id === id); if (p) { p.likes++; save(); }
+  }
+  render();
+}
+function del(id) {
+  if (!isAdmin) return;
+  openDlg('이 제보를 삭제할까요?', false, () => {
+    map.closePopup();
+    if (online) {
+      db.collection('reports').doc(id).delete().catch(err => toast('삭제하지 못했어요 (' + (err.code || '오류') + ')'));
+    } else { data = data.filter(p => p.id !== id); save(); render(); }
+    return '';
+  });
+}
+
+/* ---------- 저장소: Firebase(모두 공유) / 실패하면 이 기기에만 저장 ---------- */
+function setMode(on, msg) {
+  online = on;
+  $('mode').textContent = on ? '🌐 모든 친구와 실시간 공유 중' : '💾 이 기기에만 저장 중';
+  $('syncMsg').textContent = msg || ''; $('syncMsg').classList.toggle('hidden', !msg);
+}
+function goLocal(msg) {
+  if (unsub) { unsub(); unsub = null; }
+  try { data = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { data = []; }
+  setMode(false, msg); render();
+}
+function startSync() {
+  try { firebase.initializeApp(FIREBASE_CONFIG); db = firebase.firestore(); }
+  catch (e) { goLocal('Firebase를 불러오지 못해 이 기기에만 저장해요. 인터넷 연결을 확인해 주세요.'); return; }
+  unsub = db.collection('reports').onSnapshot(snap => {
+    setMode(true);
+    data = snap.docs.map(d => Object.assign({ id: d.id, likes: 0 }, d.data()));
+    data.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    render();
+    if (pendingFocus && markers[pendingFocus]) { focusItem(pendingFocus); pendingFocus = null; }
+  }, err => {
+    console.error(err);
+    goLocal('서버 저장소에 연결하지 못해 이 기기에만 저장해요. (' + (err.code || '오류') + ') 선생님은 Firestore 데이터베이스와 규칙 설정을 확인해 주세요.');
+  });
+}
+function addReport(p) {
+  if (online) {
+    const ref = db.collection('reports').doc();
+    pendingFocus = ref.id;
+    ref.set(p).catch(err => { pendingFocus = null; toast('저장하지 못했어요 (' + (err.code || '오류') + ')'); });
+    return true;
+  }
+  p.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  data.push(p);
+  if (!save()) { data.pop(); return false; }
+  render(); focusItem(p.id); return true;
+}
+
+/* 필터 / 검색 */
+document.getElementById('filters').addEventListener('click', e => {
+  const b = e.target.closest('.fbtn'); if (b) { cat = b.dataset.cat; render(); }
+});
+document.getElementById('search').addEventListener('input', e => { query = e.target.value; render(); });
+
+/* 관리자 모드 */
+function setAdmin(on) {
+  isAdmin = on;
+  const btn = $('adminBtn');
+  btn.textContent = on ? '🔓 관리자 모드 ON (끄기)' : '🔒 관리자 모드';
+  btn.className = 'shrink-0 text-xs sm:text-sm px-3 py-1.5 rounded-full border ' +
+    (on ? 'bg-amber-200 text-amber-900 border-amber-400' : 'bg-white text-slate-600 border-slate-300');
+  map.closePopup(); render();
+  toast(on ? '관리자 모드가 켜졌어요. 삭제 버튼이 보여요.' : '관리자 모드를 껐어요.');
+}
+$('adminBtn').addEventListener('click', () => {
+  if (isAdmin) { setAdmin(false); return; }
+  openDlg('관리자 비밀번호를 입력하세요.', true, v => {
+    if (v !== ADMIN_PW) return '비밀번호가 맞지 않아요.';
+    setAdmin(true); return '';
+  });
+});
+
+/* 등록 모달 */
+const modal = document.getElementById('modal'), form = document.getElementById('form');
+function openModal(latlng) {
+  pending = latlng; form.reset(); resetPhoto(); showErr('');
+  if (tempMark) map.removeLayer(tempMark);
+  tempMark = L.circleMarker(latlng, { radius: 9, color: '#8b5cf6', fillColor: '#c4b5fd', fillOpacity: .8 }).addTo(map);
+  modal.classList.remove('hidden'); modal.classList.add('flex');
+  form.elements.name.focus();
+}
+function closeModal() {
+  modal.classList.add('hidden'); modal.classList.remove('flex');
+  if (tempMark) { map.removeLayer(tempMark); tempMark = null; }
+  pending = null;
+}
+map.on('click', e => {
+  if (pending) return;
+  if (!BOUNDS.contains(e.latlng)) { toast('배곧동 주변 지역에만 제보할 수 있어요.'); return; }
+  openModal(e.latlng);
+});
+document.getElementById('cancel').addEventListener('click', closeModal);
+modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && pending) closeModal(); });
+
+/* 사진: 촬영/선택 -> 작게 줄여서 JPEG로 저장 */
+let photoData = '', photoBusy = false;
+function showErr(msg) { const e = document.getElementById('err'); e.textContent = msg; e.classList.toggle('hidden', !msg); }
+function resetPhoto() {
+  photoData = ''; photoBusy = false;
+  document.getElementById('photoFile').value = '';
+  document.getElementById('preview').classList.add('hidden');
+}
+function compress(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, 800 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(); };
+    img.src = url;
+  });
+}
+document.getElementById('photoFile').addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  photoBusy = true; showErr('');
+  try {
+    photoData = await compress(file);
+    document.getElementById('previewImg').src = photoData;
+    document.getElementById('preview').classList.remove('hidden');
+  } catch (err) { resetPhoto(); showErr('사진을 불러오지 못했어요. 다른 사진을 골라 주세요.'); }
+  photoBusy = false;
+});
+document.getElementById('photoClear').addEventListener('click', resetPhoto);
+
+/* 등록하기 */
+function submitReport() {
+  if (!pending) { showErr('지도를 다시 클릭해서 위치를 정해 주세요.'); return; }
+  if (photoBusy) { showErr('사진을 처리하는 중이에요. 잠깐만 기다려 주세요.'); return; }
+  const g = n => form.elements[n].value.trim();
+  if (!g('name')) { showErr('장소명을 입력해 주세요.'); return; }
+  if (!g('author')) { showErr('학번/이름을 입력해 주세요.'); return; }
+  if (!g('reason')) { showErr('등록 이유 및 개선 아이디어를 입력해 주세요.'); return; }
+  const p = { cat: form.elements.cat.value, name: g('name'), author: g('author'), reason: g('reason'),
+    photo: photoData, likes: 0, lat: pending.lat, lng: pending.lng, createdAt: Date.now() };
+  if (!addReport(p)) {
+    showErr(photoData ? '저장 공간이 부족해요. 사진을 지우고 다시 등록해 보세요.' : '저장에 실패했어요. 시크릿 모드에서는 저장이 안 될 수 있어요.');
+    return;
+  }
+  closeModal();
+}
+document.getElementById('submitBtn').addEventListener('click', submitReport);
+form.addEventListener('submit', e => { e.preventDefault(); submitReport(); });
+
+render();
+startSync();
+</script>
+</body>
+</html>
